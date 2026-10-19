@@ -22,11 +22,15 @@ const PRIORITY_ORDER = [
 
 /**
  * Returns up to `max` search keywords derived from the CV skills.
- * Falls back to `['intern']` when nothing useful is found.
+ * Falls back to `[fallback]` when nothing useful is found (default: intern).
  */
-export function deriveSearchKeywords(skills: string[], max = 3): string[] {
+export function deriveSearchKeywords(
+  skills: string[],
+  max = 3,
+  fallback = 'intern'
+): string[] {
   const usable = skills.filter((s) => s && !SKIPPED_SKILLS.has(s.trim().toLowerCase()));
-  if (usable.length === 0) return ['intern'];
+  if (usable.length === 0) return [fallback];
 
   const sorted = [...usable].sort((a, b) => {
     const ia = PRIORITY_ORDER.findIndex((p) => p.toLowerCase() === a.trim().toLowerCase());
@@ -35,5 +39,5 @@ export function deriveSearchKeywords(skills: string[], max = 3): string[] {
   });
 
   const keywords = sorted.slice(0, max).map((s) => s.trim());
-  return keywords.length > 0 ? keywords : ['intern'];
+  return keywords.length > 0 ? keywords : [fallback];
 }

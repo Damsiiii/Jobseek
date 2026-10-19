@@ -69,4 +69,20 @@ async function initDb(db: Database) {
       FOREIGN KEY (job_id) REFERENCES jobs(id)
     );
   `);
+
+  // Remote / freelance application documents (pasted job or gig descriptions)
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_applications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      company TEXT,
+      description TEXT NOT NULL,
+      engagement_type TEXT NOT NULL,
+      tailored_cv_markdown TEXT NOT NULL,
+      cover_letter_markdown TEXT NOT NULL,
+      proposal_markdown TEXT NOT NULL,
+      pitch_markdown TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 }
