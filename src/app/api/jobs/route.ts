@@ -46,6 +46,18 @@ async function upsertJobs(
   }
 }
 
+const JOBS_QUERY = `
+  SELECT * FROM jobs 
+  WHERE NOT (
+    title LIKE '%senior%' OR title LIKE '%lead%' OR title LIKE '%principal%' 
+    OR title LIKE '%architect%' OR title LIKE '%manager%' OR title LIKE '%director%' 
+    OR title LIKE '%head%'
+  )
+  ORDER BY 
+    CASE WHEN LOWER(title) LIKE '%intern%' OR LOWER(title) LIKE '%junior%' OR LOWER(title) LIKE '%trainee%' OR LOWER(title) LIKE '%associate%' THEN 0 ELSE 1 END,
+    id DESC
+`;
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -59,7 +71,7 @@ export async function GET(req: Request) {
       await upsertJobs(db, scraped);
     }
 
-    const rows = await db.all('SELECT * FROM jobs ORDER BY id DESC');
+    const rows = await db.all(JOBS_QUERY);
     return NextResponse.json({ success: true, count: rows.length, keywords, jobs: rows });
   } catch (error) {
     console.error('Error fetching/scraping jobs:', error);
@@ -93,7 +105,7 @@ export async function POST(req: Request) {
     const scraped = await scrapeAllJobs(keywords);
     await upsertJobs(db, scraped);
 
-    const rows = await db.all('SELECT * FROM jobs ORDER BY id DESC');
+    const rows = await db.all(JOBS_QUERY);
     return NextResponse.json({ success: true, count: rows.length, keywords, jobs: rows });
   } catch (error) {
     return NextResponse.json(

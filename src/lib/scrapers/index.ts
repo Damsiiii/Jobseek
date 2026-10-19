@@ -42,12 +42,18 @@ export async function scrapeAllJobs(
     }
   }
 
-  // Deduplicate by job_url or title+company
+  // shortcut: regex title filter drops senior/lead roles, upgrade to classifier if non-standard titles slip through
+  const SENIOR_RE = /\b(sr\.?|senior|lead|principal|architect|manager|director|head|vp|chief)\b/i;
+  const JUNIOR_INTERN_RE = /\b(intern|internship|trainee|junior|jr\.?|associate|graduate|entry[- ]level|apprentice)\b/i;
+
+  // Deduplicate by job_url or title+company, omitting senior/lead roles
   const seenUrls = new Set<string>();
   const seenTitles = new Set<string>();
   const uniqueJobs: JobListing[] = [];
 
   for (const job of allJobs) {
+    if (SENIOR_RE.test(job.title)) continue;
+
     const titleKey = `${job.title.toLowerCase().trim()}_${job.company.toLowerCase().trim()}`;
     const urlKey = job.job_url.toLowerCase().trim();
     if (!seenTitles.has(titleKey) && !seenUrls.has(urlKey)) {
@@ -56,6 +62,13 @@ export async function scrapeAllJobs(
       uniqueJobs.push(job);
     }
   }
+
+  // Prioritize junior & intern positions over generic mid-level titles
+  uniqueJobs.sort((a, b) => {
+    const aMatch = JUNIOR_INTERN_RE.test(a.title) ? 1 : 0;
+    const bMatch = JUNIOR_INTERN_RE.test(b.title) ? 1 : 0;
+    return bMatch - aMatch;
+  });
 
   return uniqueJobs;
 }
