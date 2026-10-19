@@ -21,7 +21,7 @@ export async function scrapeTracker(keywords: string = 'intern'): Promise<JobLis
       const link = $(el).find('a').attr('href');
       const posted_date = extractPostedDate($, el);
 
-      if (title && link && title.toLowerCase().includes('intern')) {
+      if (title && link) {
         const fullUrl = link.startsWith('http') ? link : `https://topjobs.lk/${link}`;
         results.push({
           title,
@@ -36,27 +36,6 @@ export async function scrapeTracker(keywords: string = 'intern'): Promise<JobLis
     });
   } catch (error) {
     console.warn('Tracker/TopJobs scraper notice:', error);
-  }
-
-  if (results.length === 0) {
-    results.push(
-      {
-        title: 'Business Analyst Intern',
-        company: 'LSEG (London Stock Exchange Group) Sri Lanka',
-        location: 'Colombo 10, Sri Lanka',
-        source: 'Tracker Jobs',
-        job_url: 'https://topjobs.lk/jobs/lseg-ba-intern',
-        description: 'LSEG is looking for a Business Analyst Intern to participate in requirements gathering, agile backlog grooming, and software documentation.',
-      },
-      {
-        title: 'Mobile App Developer Intern (Flutter / React Native)',
-        company: 'CodeGen International',
-        location: 'Colombo, Sri Lanka',
-        source: 'Tracker Jobs',
-        job_url: 'https://topjobs.lk/jobs/codegen-mobile-intern',
-        description: 'CodeGen International is seeking a Mobile App Developer Intern with Flutter or React Native skills for cross-platform app development.',
-      }
-    );
   }
 
   return results;

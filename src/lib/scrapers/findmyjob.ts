@@ -40,26 +40,5 @@ export async function scrapeFindMyJob(keywords: string = 'intern'): Promise<JobL
     console.warn('FindMyJob scraper notice:', error);
   }
 
-  if (results.length === 0) {
-    results.push(
-      {
-        title: 'Backend Engineering Intern (Node.js/Python)',
-        company: 'Calcey Technologies',
-        location: 'Colombo 05, Sri Lanka',
-        source: 'FindMyJob.lk',
-        job_url: 'https://findmyjob.lk/jobs/calcey-backend-intern',
-        description: 'Calcey Technologies is hiring a Backend Engineering Intern. Knowledge of REST APIs, PostgreSQL, Node.js or Python, and Git required.',
-      },
-      {
-        title: 'Cyber Security Intern',
-        company: 'Zone24x7',
-        location: 'Nawala, Sri Lanka',
-        source: 'FindMyJob.lk',
-        job_url: 'https://findmyjob.lk/jobs/zone24x7-cybersecurity-intern',
-        description: 'Zone24x7 is looking for a Cyber Security Intern to assist with vulnerability assessments, network security testing, and incident response.',
-      }
-    );
-  }
-
   return results;
 }

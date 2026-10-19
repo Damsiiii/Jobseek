@@ -19,6 +19,7 @@ import {
   Wand2
 } from 'lucide-react';
 import { downloadAsDocx, printOrSavePdf } from '@/lib/exportUtils';
+import MarkdownView from '@/components/MarkdownView';
 
 interface Job {
   id: number;
@@ -43,6 +44,24 @@ interface Profile {
     summary?: string;
   } | null;
   updated_at: string;
+}
+
+interface DocScore {
+  score: number;
+  matchedKeywords: string[];
+  missingKeywords: string[];
+  tips: string[];
+}
+
+interface ApplicationScores {
+  cv: DocScore;
+  coverLetter: DocScore;
+}
+
+function scoreBadgeClass(score: number): string {
+  if (score >= 80) return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (score >= 60) return 'bg-amber-100 text-amber-800 border-amber-200';
+  return 'bg-rose-100 text-rose-800 border-rose-200';
 }
 
 /** Formats an ISO posted date as a human-friendly relative time, e.g. "3 days ago". */
@@ -72,11 +91,15 @@ export default function Home() {
 
   // Active customized document modal/drawer
   const [activeApplication, setActiveApplication] = useState<{
+    applicationId?: number;
     job: Job;
     tailoredCv: string;
     coverLetter: string;
+    scores: ApplicationScores;
+    previousScores?: ApplicationScores;
   } | null>(null);
   const [activeTab, setActiveTab] = useState<'cv' | 'coverLetter'>('cv');
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   useEffect(() => {
     fetchProfile();
@@ -158,10 +181,18 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.success) {
+        const emptyScore: DocScore = {
+          score: 0,
+          matchedKeywords: [],
+          missingKeywords: [],
+          tips: [],
+        };
         setActiveApplication({
+          applicationId: data.applicationId,
           job,
           tailoredCv: data.tailoredCv,
           coverLetter: data.coverLetter,
+          scores: data.scores ?? { cv: emptyScore, coverLetter: emptyScore },
         });
         setActiveTab('cv');
       } else {
@@ -175,6 +206,58 @@ export default function Home() {
     }
   };
 
+  const handleRegenerateApplication = async () => {
+    if (!activeApplication || isRegenerating) return;
+
+    setIsRegenerating(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const res = await fetch('/api/tailor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          jobId: activeApplication.job.id,
+          applicationId: activeApplication.applicationId,
+          regenerate: true,
+          optimizationContext: {
+            previousCv: activeApplication.tailoredCv,
+            previousCoverLetter: activeApplication.coverLetter,
+            scores: activeApplication.scores,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActiveApplication((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            applicationId: data.applicationId ?? prev.applicationId,
+            tailoredCv: data.tailoredCv,
+            coverLetter: data.coverLetter,
+            scores: data.scores,
+            previousScores: prev.scores,
+          };
+        });
+      } else {
+        alert(data.error || 'Failed to regenerate tailored application.');
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      if (err instanceof Error && err.name === 'AbortError') {
+        alert('Regeneration request timed out after 15 seconds. Please try again.');
+      } else {
+        alert('Error regenerating application.');
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      setIsRegenerating(false);
+    }
+  };
+
   // Filter jobs by search and source
   const filteredJobs = jobs.filter((job) => {
     const matchesSearch =
@@ -184,59 +267,6 @@ export default function Home() {
     const matchesSource = selectedSource === 'All' || job.source === selectedSource;
     return matchesSearch && matchesSource;
   });
-
-  const parseFormattedText = (str: string) => {
-    const parts = str.split(/(\*\*.*?\*\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={i} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
-      }
-      return part;
-    });
-  };
-
-  const renderMarkdownText = (text: string) => {
-    return text.split('\n').map((line, idx) => {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('# ')) {
-        return (
-          <h1 key={idx} className="text-2xl font-bold text-gray-900 border-b-2 border-gray-900 pb-1 mb-3 text-center uppercase tracking-wide">
-            {trimmed.replace('# ', '')}
-          </h1>
-        );
-      }
-      if (trimmed.startsWith('## ')) {
-        return (
-          <h2 key={idx} className="text-lg font-bold text-gray-800 border-b border-gray-300 mt-4 mb-2 uppercase tracking-wider">
-            {trimmed.replace('## ', '')}
-          </h2>
-        );
-      }
-      if (trimmed.startsWith('### ')) {
-        return (
-          <h3 key={idx} className="text-md font-semibold text-gray-800 mt-3 mb-1">
-            {trimmed.replace('### ', '')}
-          </h3>
-        );
-      }
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        const content = trimmed.replace(/^[-*]\s+/, '');
-        return (
-          <li key={idx} className="ml-5 list-disc text-sm text-gray-700 leading-relaxed mb-1">
-            {parseFormattedText(content)}
-          </li>
-        );
-      }
-      if (!trimmed) {
-        return <div key={idx} className="h-2"></div>;
-      }
-      return (
-        <p key={idx} className="text-sm text-gray-700 leading-relaxed mb-2">
-          {parseFormattedText(line)}
-        </p>
-      );
-    });
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-12">
@@ -532,23 +562,67 @@ export default function Home() {
               <div className="flex bg-white rounded-lg p-1 border border-slate-200 shadow-sm">
                 <button
                   onClick={() => setActiveTab('cv')}
-                  className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-colors ${
+                  className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-colors inline-flex items-center gap-2 ${
                     activeTab === 'cv'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   ATS Friendly CV
+                  <span
+                    className={`text-xs font-bold px-1.5 py-0.5 rounded border ${
+                      activeTab === 'cv'
+                        ? 'bg-white/20 text-white border-white/30'
+                        : scoreBadgeClass(activeApplication.scores.cv.score)
+                    }`}
+                  >
+                    {activeApplication.scores.cv.score}
+                  </span>
+                  {activeApplication.previousScores && (() => {
+                    const diff = activeApplication.scores.cv.score - activeApplication.previousScores.cv.score;
+                    if (diff === 0) return null;
+                    return (
+                      <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${
+                        diff > 0
+                          ? activeTab === 'cv' ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-100 text-emerald-700'
+                          : activeTab === 'cv' ? 'bg-rose-500/30 text-rose-200' : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {diff > 0 ? `+${diff} ↑` : `${diff} ↓`}
+                      </span>
+                    );
+                  })()}
                 </button>
                 <button
                   onClick={() => setActiveTab('coverLetter')}
-                  className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-colors ${
+                  className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-colors inline-flex items-center gap-2 ${
                     activeTab === 'coverLetter'
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   Cover Letter
+                  <span
+                    className={`text-xs font-bold px-1.5 py-0.5 rounded border ${
+                      activeTab === 'coverLetter'
+                        ? 'bg-white/20 text-white border-white/30'
+                        : scoreBadgeClass(activeApplication.scores.coverLetter.score)
+                    }`}
+                  >
+                    {activeApplication.scores.coverLetter.score}
+                  </span>
+                  {activeApplication.previousScores && (() => {
+                    const diff = activeApplication.scores.coverLetter.score - activeApplication.previousScores.coverLetter.score;
+                    if (diff === 0) return null;
+                    return (
+                      <span className={`text-[10px] font-bold px-1 py-0.5 rounded ${
+                        diff > 0
+                          ? activeTab === 'coverLetter' ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-100 text-emerald-700'
+                          : activeTab === 'coverLetter' ? 'bg-rose-500/30 text-rose-200' : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {diff > 0 ? `+${diff} ↑` : `${diff} ↓`}
+                      </span>
+                    );
+                  })()}
                 </button>
               </div>
 
@@ -587,17 +661,104 @@ export default function Home() {
               </div>
             </div>
 
+            {(() => {
+              const activeScore =
+                activeTab === 'cv'
+                  ? activeApplication.scores.cv
+                  : activeApplication.scores.coverLetter;
+              const missingShown = activeScore.missingKeywords.slice(0, 8);
+              const matchedShown = activeScore.matchedKeywords.slice(0, 8);
+              return (
+                <div className="px-6 py-3 border-b border-slate-200 bg-white">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-sm font-semibold text-slate-700">ATS score</span>
+                      <span
+                        className={`text-sm font-bold px-2 py-0.5 rounded border ${scoreBadgeClass(
+                          activeScore.score
+                        )}`}
+                      >
+                        {activeScore.score}/100
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {activeScore.matchedKeywords.length} keywords matched
+                        {activeScore.missingKeywords.length > 0
+                          ? ` · ${activeScore.missingKeywords.length} missing`
+                          : ''}
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={handleRegenerateApplication}
+                      disabled={isRegenerating}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm ${
+                        isRegenerating
+                          ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                          : activeScore.score < 85
+                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                          : 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700'
+                      }`}
+                      title="Re-run LLM/ATS optimizer using missing keywords and feedback tips"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${isRegenerating ? 'animate-spin text-indigo-500' : ''}`} />
+                      <span>{isRegenerating ? 'Optimizing for ATS...' : 'Regenerate to Improve Score'}</span>
+                    </button>
+                  </div>
+                  {(matchedShown.length > 0 || missingShown.length > 0) && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {matchedShown.map((kw) => (
+                        <span
+                          key={`m-${kw}`}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                      {missingShown.map((kw) => (
+                        <span
+                          key={`x-${kw}`}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-500 border border-slate-200 line-through decoration-slate-300"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {activeScore.tips.length > 0 && (
+                    <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside">
+                      {activeScore.tips.map((tip, i) => (
+                        <li key={i}>{tip}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Preview Document Paper Area */}
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-200 flex justify-center">
+            <div className="flex-1 overflow-y-auto p-6 bg-slate-200 flex justify-center relative">
+              {isRegenerating && (
+                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center">
+                  <div className="bg-white/95 text-slate-800 p-6 rounded-xl shadow-xl flex flex-col items-center gap-3 border border-slate-200 max-w-sm text-center mx-4">
+                    <Sparkles className="w-8 h-8 text-indigo-600 animate-spin" />
+                    <div>
+                      <p className="font-bold text-slate-900 text-sm">Optimizing for ATS...</p>
+                      <p className="text-xs text-slate-500 mt-1">Weaving in missing keywords and refining structure</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div
                 id="preview-document-content"
                 className="bg-white p-8 sm:p-12 shadow-lg border border-slate-300 max-w-2xl w-full min-h-[650px] font-sans text-slate-900"
               >
-                {renderMarkdownText(
-                  activeTab === 'cv'
-                    ? activeApplication.tailoredCv
-                    : activeApplication.coverLetter
-                )}
+                <MarkdownView
+                  text={
+                    activeTab === 'cv'
+                      ? activeApplication.tailoredCv
+                      : activeApplication.coverLetter
+                  }
+                />
               </div>
             </div>
           </div>

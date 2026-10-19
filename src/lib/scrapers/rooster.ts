@@ -40,27 +40,5 @@ export async function scrapeRooster(keywords: string = 'intern'): Promise<JobLis
     console.warn('Rooster scraper fallback or live fetch notice:', error);
   }
 
-  // Provide high-quality Sri Lankan tech internship defaults if scraping returns empty or blocked
-  if (results.length === 0) {
-    results.push(
-      {
-        title: 'Software Engineering Intern',
-        company: 'Sysco LABS Sri Lanka',
-        location: 'Colombo, Sri Lanka',
-        source: 'Rooster.lk',
-        job_url: 'https://rooster.lk/jobs/syscolabs-software-intern',
-        description: 'Sysco LABS is seeking a Software Engineering Intern to work on large-scale distributed systems, React, Node.js, and Java backend services.',
-      },
-      {
-        title: 'Quality Assurance (QA) Intern',
-        company: '99x Sri Lanka',
-        location: 'Colombo, Sri Lanka',
-        source: 'Rooster.lk',
-        job_url: 'https://rooster.lk/jobs/99x-qa-intern',
-        description: 'Join 99x as a QA Intern. Responsible for automated test scripts, API testing, performance benchmarks, and regression suites.',
-      }
-    );
-  }
-
   return results;
 }

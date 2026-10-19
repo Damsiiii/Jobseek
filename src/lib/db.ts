@@ -2,19 +2,28 @@ import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import path from 'path';
 
-let dbInstance: Database | null = null;
+let dbPromise: Promise<Database> | null = null;
 
 export async function getDb(): Promise<Database> {
-  if (dbInstance) return dbInstance;
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      const dbPath = path.join(process.cwd(), 'data.sqlite');
+      const db = await open({
+        filename: dbPath,
+        driver: sqlite3.Database,
+      });
 
-  const dbPath = path.join(process.cwd(), 'data.sqlite');
-  dbInstance = await open({
-    filename: dbPath,
-    driver: sqlite3.Database,
-  });
+      await db.exec(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA foreign_keys = ON;
+      `);
 
-  await initDb(dbInstance);
-  return dbInstance;
+      await initDb(db);
+      return db;
+    })();
+  }
+  return dbPromise;
 }
 
 async function initDb(db: Database) {
@@ -65,10 +74,30 @@ async function initDb(db: Database) {
       job_id INTEGER NOT NULL,
       tailored_cv_markdown TEXT NOT NULL,
       cover_letter_markdown TEXT NOT NULL,
+      cv_ats_score INTEGER,
+      cover_letter_ats_score INTEGER,
+      cv_score_json TEXT,
+      cover_letter_score_json TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (job_id) REFERENCES jobs(id)
     );
   `);
+
+  // Migration: ATS score columns for applications created before scoring existed
+  const appColumns: Array<{ name: string }> = await db.all('PRAGMA table_info(applications)');
+  const appColNames = new Set(appColumns.map((col) => col.name));
+  if (!appColNames.has('cv_ats_score')) {
+    await db.exec('ALTER TABLE applications ADD COLUMN cv_ats_score INTEGER');
+  }
+  if (!appColNames.has('cover_letter_ats_score')) {
+    await db.exec('ALTER TABLE applications ADD COLUMN cover_letter_ats_score INTEGER');
+  }
+  if (!appColNames.has('cv_score_json')) {
+    await db.exec('ALTER TABLE applications ADD COLUMN cv_score_json TEXT');
+  }
+  if (!appColNames.has('cover_letter_score_json')) {
+    await db.exec('ALTER TABLE applications ADD COLUMN cover_letter_score_json TEXT');
+  }
 
   // Remote / freelance application documents (pasted job or gig descriptions)
   await db.exec(`

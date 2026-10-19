@@ -30,28 +30,40 @@ async function upsertJobs(
   db: Awaited<ReturnType<typeof getDb>>,
   scraped: Awaited<ReturnType<typeof scrapeAllJobs>>
 ) {
-  for (const job of scraped) {
-    await db.run(
-      `INSERT INTO jobs (title, company, location, source, job_url, description, posted_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(job_url) DO UPDATE SET
-         title = excluded.title,
-         company = excluded.company,
-         location = excluded.location,
-         description = excluded.description,
-         posted_date = COALESCE(excluded.posted_date, jobs.posted_date),
-         scraped_at = CURRENT_TIMESTAMP`,
-      [job.title, job.company, job.location, job.source, job.job_url, job.description, job.posted_date ?? null]
-    );
+  if (!scraped.length) return;
+  await db.run('BEGIN TRANSACTION');
+  try {
+    for (const job of scraped) {
+      await db.run(
+        `INSERT INTO jobs (title, company, location, source, job_url, description, posted_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(job_url) DO UPDATE SET
+           title = excluded.title,
+           company = excluded.company,
+           location = excluded.location,
+           description = excluded.description,
+           posted_date = COALESCE(excluded.posted_date, jobs.posted_date),
+           scraped_at = CURRENT_TIMESTAMP`,
+        [job.title, job.company, job.location, job.source, job.job_url, job.description, job.posted_date ?? null]
+      );
+    }
+    await db.run('COMMIT');
+  } catch (error) {
+    await db.run('ROLLBACK');
+    throw error;
   }
 }
 
 const JOBS_QUERY = `
   SELECT * FROM jobs 
   WHERE NOT (
-    title LIKE '%senior%' OR title LIKE '%lead%' OR title LIKE '%principal%' 
-    OR title LIKE '%architect%' OR title LIKE '%manager%' OR title LIKE '%director%' 
-    OR title LIKE '%head%'
+    title LIKE 'senior %' OR title LIKE '% senior %' OR title LIKE '% senior'
+    OR title LIKE 'lead %' OR title LIKE '% lead %' OR title LIKE '% lead'
+    OR title LIKE 'principal %' OR title LIKE '% principal %'
+    OR title LIKE 'architect %' OR title LIKE '% architect %'
+    OR title LIKE 'manager %' OR title LIKE '% manager %'
+    OR title LIKE 'director %' OR title LIKE '% director %'
+    OR title LIKE 'head of %' OR title LIKE '% head of %'
   )
   ORDER BY 
     CASE WHEN LOWER(title) LIKE '%intern%' OR LOWER(title) LIKE '%junior%' OR LOWER(title) LIKE '%trainee%' OR LOWER(title) LIKE '%associate%' THEN 0 ELSE 1 END,

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { extractProfileInfo } from '@/lib/cvParser';
 import PDFParser from 'pdf2json';
 
 export async function GET() {
@@ -90,34 +91,4 @@ function extractPdfText(buffer: Buffer): Promise<string> {
     });
     pdfParser.parseBuffer(buffer);
   });
-}
-
-function extractProfileInfo(text: string) {
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const phoneMatch = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  const linkedinMatch = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9_-]+/i);
-  const githubMatch = text.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[a-zA-Z0-9_-]+/i);
-
-  const commonSkills = [
-    'JavaScript', 'TypeScript', 'Python', 'Java', 'C++', 'C#', 'PHP', 'Ruby', 'Go', 'Rust',
-    'React', 'Next.js', 'Angular', 'Vue', 'Node.js', 'Express', 'Django', 'Flask', 'Spring',
-    'HTML', 'CSS', 'Tailwind', 'Bootstrap', 'Sass',
-    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'SQLite', 'Firebase', 'Redis',
-    'Git', 'GitHub', 'Docker', 'AWS', 'Azure', 'GCP', 'Linux',
-    'REST API', 'GraphQL', 'Machine Learning', 'Data Analysis', 'Agile', 'Scrum'
-  ];
-
-  const foundSkills = commonSkills.filter(skill => {
-    const escaped = skill.replace(/[\.\+\#]/g, '\\$&');
-    return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
-  });
-
-  return {
-    email: emailMatch ? emailMatch[0] : null,
-    phone: phoneMatch ? phoneMatch[0] : null,
-    linkedin: linkedinMatch ? linkedinMatch[0] : null,
-    github: githubMatch ? githubMatch[0] : null,
-    skills: foundSkills,
-    summary: text.slice(0, 400).trim(),
-  };
 }

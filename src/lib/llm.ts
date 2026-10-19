@@ -1,5 +1,12 @@
 import { GoogleGenAI } from '@google/genai';
 import { getDb } from './db';
+import type { ApplicationScores } from './atsScore';
+
+export type OptimizationContext = {
+  previousCv: string;
+  previousCoverLetter: string;
+  scores: ApplicationScores;
+};
 
 async function getApiKey(): Promise<string | null> {
   if (process.env.GEMINI_API_KEY) {
@@ -14,13 +21,46 @@ export async function generateTailoredApplication(
   candidateCV: string,
   jobTitle: string,
   companyName: string,
-  jobDescription: string
+  jobDescription: string,
+  optimizationContext?: OptimizationContext
 ): Promise<{ tailoredCv: string; coverLetter: string }> {
   const apiKey = await getApiKey();
 
   if (apiKey && apiKey.trim()) {
     try {
       const ai = new GoogleGenAI({ apiKey });
+
+      const regenInstructions = optimizationContext
+        ? `
+---REGENERATION / ATS SCORE OPTIMIZATION FEEDBACK---
+This is a score-improving revision. The previous version scored:
+- CV ATS Score: ${optimizationContext.scores.cv.score}/100
+  Missing Keywords: ${optimizationContext.scores.cv.missingKeywords.join(', ') || 'None'}
+  Feedback Tips:
+${optimizationContext.scores.cv.tips.map((t) => `  * ${t}`).join('\n') || '  * None'}
+
+- Cover Letter ATS Score: ${optimizationContext.scores.coverLetter.score}/100
+  Missing Keywords: ${optimizationContext.scores.coverLetter.missingKeywords.join(', ') || 'None'}
+  Feedback Tips:
+${optimizationContext.scores.coverLetter.tips.map((t) => `  * ${t}`).join('\n') || '  * None'}
+
+PRIOR DRAFTS:
+CV Draft:
+"""
+${optimizationContext.previousCv}
+"""
+Cover Letter Draft:
+"""
+${optimizationContext.previousCoverLetter}
+"""
+
+REVISION GOALS:
+1. Address the missing keywords and feedback tips directly.
+2. Weave missing keywords naturally into the CV Summary, Skills, and Experience bullets (truthfully reflecting candidate).
+3. Ensure standard single-column ATS section headers: SUMMARY, TECHNICAL SKILLS, PROJECTS & EXPERIENCE, EDUCATION.
+4. Ensure the Cover Letter strictly mentions "${companyName}" and "${jobTitle}", integrates missing keywords, and stays within 180-380 words with proper salutation and sign-off.
+`
+        : '';
 
       const prompt = `
 You are an expert ATS Resume Optimization Specialist and Career Advisor.
@@ -34,7 +74,7 @@ Given the candidate's existing CV and a target internship job description, gener
 2. **COVER LETTER**:
    - Professional, engaging, personalized to ${companyName} for the ${jobTitle} position.
    - Express strong interest, highlight top 3 relevant skills matching the job description, and demonstrate enthusiasm.
-
+${regenInstructions}
 Candidate CV:
 """
 ${candidateCV}
@@ -56,10 +96,17 @@ Output format MUST be EXACTLY:
 ---COVER_LETTER_END---
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-      });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Gemini API call timed out after 12s')), 12000)
+      );
+
+      const response = await Promise.race([
+        ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+        }),
+        timeoutPromise,
+      ]);
 
       const text = response.text || '';
       const cvMatch = text.match(/---CV_START---([\s\S]*?)---CV_END---/);
@@ -77,29 +124,33 @@ Output format MUST be EXACTLY:
   }
 
   // Fallback intelligent customizer when API key is not configured or fails
-  return generateFallbackTailoredApplication(candidateCV, jobTitle, companyName, jobDescription);
+  return generateFallbackTailoredApplication(
+    candidateCV,
+    jobTitle,
+    companyName,
+    jobDescription,
+    optimizationContext
+  );
 }
+
+import { extractCandidateName, extractCandidateContact } from './cvParser';
+export { extractCandidateName, extractCandidateContact };
 
 function generateFallbackTailoredApplication(
   candidateCV: string,
   jobTitle: string,
   companyName: string,
-  jobDescription: string
+  jobDescription: string,
+  optimizationContext?: OptimizationContext
 ) {
-  // Extract contact info or name
-  const nameMatch = candidateCV.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/m);
-  const candidateName = nameMatch ? nameMatch[1] : 'Candidate Name';
+  const { candidateName, email, phone } = extractCandidateContact(candidateCV);
 
-  const emailMatch = candidateCV.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const email = emailMatch ? emailMatch[0] : 'candidate@email.com';
-
-  const phoneMatch = candidateCV.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  const phone = phoneMatch ? phoneMatch[0] : '+94 77 123 4567';
-
-  // Extract key technical words from job description
-  const keywords = ['React', 'Node.js', 'TypeScript', 'JavaScript', 'Python', 'Java', 'SQL', 'Git', 'REST API', 'Agile', 'AWS', 'Docker', 'Testing', 'Problem Solving'];
-  const matchingKeywords = keywords.filter(k => new RegExp(`\\b${k}\\b`, 'i').test(jobDescription));
-  const matchedSkillsList = matchingKeywords.length > 0 ? matchingKeywords.join(', ') : 'Software Engineering, Problem Solving, Web Development, Databases, Git';
+  // Extract key technical words from job description + missing keywords from optimization context
+  const baseKeywords = ['React', 'Node.js', 'TypeScript', 'JavaScript', 'Python', 'Java', 'SQL', 'Git', 'REST API', 'Agile', 'AWS', 'Docker', 'Testing', 'Problem Solving'];
+  const matchedFromJd = baseKeywords.filter(k => new RegExp(`\\b${k}\\b`, 'i').test(jobDescription));
+  const missingFromContext = optimizationContext?.scores.cv.missingKeywords || [];
+  const combinedKeywords = Array.from(new Set([...matchedFromJd, ...missingFromContext]));
+  const matchedSkillsList = combinedKeywords.length > 0 ? combinedKeywords.join(', ') : 'Software Engineering, Problem Solving, Web Development, Databases, Git';
 
   const tailoredCv = `# ${candidateName}
 ${email} | ${phone} | Colombo, Sri Lanka | LinkedIn | GitHub
@@ -281,14 +332,7 @@ function generateFallbackRemoteApplication(
   jobDescription: string,
   engagementType: EngagementType
 ): RemoteApplicationDocs {
-  const nameMatch = candidateCV.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/m);
-  const candidateName = nameMatch ? nameMatch[1] : 'Candidate Name';
-
-  const emailMatch = candidateCV.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const email = emailMatch ? emailMatch[0] : 'candidate@email.com';
-
-  const phoneMatch = candidateCV.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-  const phone = phoneMatch ? phoneMatch[0] : '+94 77 123 4567';
+  const { candidateName, email, phone } = extractCandidateContact(candidateCV);
 
   const keywords = [
     'React', 'Node.js', 'TypeScript', 'JavaScript', 'Python', 'Java', 'SQL', 'Git',

@@ -114,7 +114,7 @@ export function printOrSavePdf(elementId: string, title: string) {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>${title}</title>
+        <meta charset="utf-8" />
         <style>
           body {
             font-family: 'Arial', 'Helvetica', sans-serif;
@@ -163,14 +163,23 @@ export function printOrSavePdf(elementId: string, title: string) {
         </style>
       </head>
       <body>
-        ${element.innerHTML}
-        <script>
-          window.onload = function() {
-            window.print();
-          };
-        </script>
+        <div id="print-root"></div>
       </body>
     </html>
   `);
   printWindow.document.close();
+
+  // Safely assign title as DOM property to prevent script breakout
+  printWindow.document.title = title;
+
+  const container = printWindow.document.getElementById('print-root');
+  if (container) {
+    container.innerHTML = element.innerHTML;
+  }
+
+  // Trigger print after rendering
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+  }, 250);
 }

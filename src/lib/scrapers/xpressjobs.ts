@@ -40,26 +40,5 @@ export async function scrapeXpressJobs(keywords: string = 'intern'): Promise<Job
     console.warn('XpressJobs scraper fallback or live fetch notice:', error);
   }
 
-  if (results.length === 0) {
-    results.push(
-      {
-        title: 'Full Stack Developer Intern',
-        company: 'Virtusa Sri Lanka',
-        location: 'Colombo, Sri Lanka',
-        source: 'XpressJobs',
-        job_url: 'https://xpress.jobs/jobs/virtusa-fullstack-intern',
-        description: 'Virtusa is hiring Full Stack Developer Interns with hands-on experience in React, TypeScript, Python / Java, and SQL databases.',
-      },
-      {
-        title: 'Data Science & AI Intern',
-        company: 'Axiata Digital Labs',
-        location: 'Colombo 02, Sri Lanka',
-        source: 'XpressJobs',
-        job_url: 'https://xpress.jobs/jobs/adl-datascience-intern',
-        description: 'Looking for a Data Science Intern to assist in data cleaning, predictive modeling, Python pandas/scikit-learn, and dashboards.',
-      }
-    );
-  }
-
   return results;
 }

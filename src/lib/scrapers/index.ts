@@ -17,6 +17,30 @@ const ALL_SCRAPERS: Array<{ name: string; fn: ScraperFn }> = [
   { name: 'linkedin', fn: scrapeLinkedIn },
 ];
 
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency = 3
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const idx = nextIndex++;
+      try {
+        const val = await tasks[idx]();
+        results[idx] = { status: 'fulfilled', value: val };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 /**
  * Runs every scraper for one or more keywords (e.g. derived from the
  * candidate's CV) and returns a deduplicated list of jobs.
@@ -24,16 +48,28 @@ const ALL_SCRAPERS: Array<{ name: string; fn: ScraperFn }> = [
 export async function scrapeAllJobs(
   keywords: string | string[] = 'intern'
 ): Promise<JobListing[]> {
-  const keywordList = (Array.isArray(keywords) ? keywords : [keywords])
+  const rawList = (Array.isArray(keywords) ? keywords : [keywords])
     .map((k) => (k || '').trim())
     .filter(Boolean);
+
+  // Deduplicate keywords (case-insensitive)
+  const seenKw = new Set<string>();
+  const keywordList: string[] = [];
+  for (const kw of rawList) {
+    const lower = kw.toLowerCase();
+    if (!seenKw.has(lower)) {
+      seenKw.add(lower);
+      keywordList.push(kw);
+    }
+  }
+
   const effectiveKeywords = keywordList.length > 0 ? keywordList : ['intern'];
 
-  const scraperResults = await Promise.allSettled(
-    effectiveKeywords.flatMap((keyword) =>
-      ALL_SCRAPERS.map((scraper) => scraper.fn(keyword))
-    )
+  const tasks = effectiveKeywords.flatMap((keyword) =>
+    ALL_SCRAPERS.map((scraper) => () => scraper.fn(keyword))
   );
+
+  const scraperResults = await runWithConcurrency(tasks, 3);
 
   const allJobs: JobListing[] = [];
   for (const res of scraperResults) {
