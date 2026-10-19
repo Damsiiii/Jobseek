@@ -17,7 +17,9 @@ import {
   Building,
   Key,
   X,
-  FileCheck
+  FileCheck,
+  Clock,
+  Wand2
 } from 'lucide-react';
 import { downloadAsDocx, printOrSavePdf } from '@/lib/exportUtils';
 
@@ -29,6 +31,7 @@ interface Job {
   source: string;
   job_url: string;
   description: string;
+  posted_date: string | null;
   scraped_at: string;
 }
 
@@ -45,6 +48,20 @@ interface Profile {
   updated_at: string;
 }
 
+/** Formats an ISO posted date as a human-friendly relative time, e.g. "3 days ago". */
+const formatPostedDate = (iso?: string | null): string | null => {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return null;
+  const days = Math.floor((Date.now() - date.getTime()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return '1 week ago';
+  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  return date.toLocaleDateString();
+};
+
 export default function Home() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -54,6 +71,7 @@ export default function Home() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [uploadingCv, setUploadingCv] = useState(false);
   const [generatingForJobId, setGeneratingForJobId] = useState<number | null>(null);
+  const [lastKeywords, setLastKeywords] = useState<string[]>([]);
 
   // Active customized document modal/drawer
   const [activeApplication, setActiveApplication] = useState<{
@@ -115,14 +133,20 @@ export default function Home() {
     }
   };
 
-  const fetchJobs = async (triggerScrape = false) => {
+  const fetchJobs = async (triggerScrape = false, basedOnCv = false) => {
     setLoadingJobs(true);
     try {
-      const url = triggerScrape ? '/api/jobs?scrape=true' : '/api/jobs';
+      let url = '/api/jobs';
+      if (triggerScrape) {
+        url = basedOnCv ? '/api/jobs?scrape=true&basedOn=cv' : '/api/jobs?scrape=true';
+      }
       const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs || []);
+        if (Array.isArray(data.keywords)) {
+          setLastKeywords(data.keywords);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -147,8 +171,8 @@ export default function Home() {
       const data = await res.json();
       if (data.success) {
         setProfile(data.profile);
-        // Automatically scrape internships after uploading CV
-        await fetchJobs(true);
+        // Automatically scrape internships matched to the uploaded CV
+        await fetchJobs(true, true);
       }
     } catch (err) {
       console.error(err);
@@ -318,6 +342,15 @@ export default function Home() {
                   </div>
                 )}
 
+                <button
+                  onClick={() => fetchJobs(true, true)}
+                  disabled={loadingJobs}
+                  className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Wand2 className={`w-4 h-4 ${loadingJobs ? 'animate-pulse' : ''}`} />
+                  <span>{loadingJobs ? 'Scraping Matches...' : 'Scrape Jobs Matched to My CV'}</span>
+                </button>
+
                 <label className="block w-full text-center py-2 px-4 border border-indigo-600 text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer text-sm font-medium transition-colors">
                   {uploadingCv ? 'Processing CV & Scraping...' : 'Update CV (PDF)'}
                   <input
@@ -372,8 +405,12 @@ export default function Home() {
                 <span>FindMyJob.lk</span>
                 <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-medium">Active</span>
               </div>
-              <div className="flex justify-between items-center py-1">
+              <div className="flex justify-between items-center py-1 border-b border-slate-100">
                 <span>Tracker Jobs (TopJobs)</span>
+                <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-medium">Active</span>
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span>LinkedIn</span>
                 <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-medium">Active</span>
               </div>
             </div>
@@ -407,6 +444,7 @@ export default function Home() {
                 <option value="Finder.lk">Finder.lk</option>
                 <option value="FindMyJob.lk">FindMyJob.lk</option>
                 <option value="Tracker Jobs">Tracker Jobs</option>
+                <option value="LinkedIn">LinkedIn</option>
               </select>
 
               <button
@@ -419,6 +457,17 @@ export default function Home() {
               </button>
             </div>
           </div>
+
+          {lastKeywords.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 px-1">
+              <span className="font-semibold uppercase tracking-wider">Searching:</span>
+              {lastKeywords.map((kw, i) => (
+                <span key={i} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full font-medium border border-indigo-100">
+                  {kw}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Jobs List */}
           <div className="space-y-4">
@@ -451,10 +500,16 @@ export default function Home() {
                 >
                   <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                     <div className="space-y-2">
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2 flex-wrap">
                         <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-md">
                           {job.source}
                         </span>
+                        {formatPostedDate(job.posted_date) && (
+                          <span className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-800 text-xs font-semibold rounded-md border border-amber-100">
+                            <Clock className="w-3 h-3" />
+                            Posted {formatPostedDate(job.posted_date)}
+                          </span>
+                        )}
                         <span className="text-xs text-slate-400">
                           Scraped {new Date(job.scraped_at).toLocaleDateString()}
                         </span>

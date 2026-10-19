@@ -26,18 +26,25 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const file = formData.get('file') as File | null;
+    const contentType = req.headers.get('content-type') || '';
 
     let text = '';
     let filename = '';
 
-    if (file) {
-      filename = file.name;
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+    if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
+      const formData = await req.formData();
+      const file = formData.get('file') as File | null;
 
-      text = await extractPdfText(buffer);
+      if (file) {
+        filename = file.name;
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        text = await extractPdfText(buffer);
+      } else if (formData.get('text')) {
+        text = String(formData.get('text'));
+        filename = String(formData.get('filename') || 'Pasted CV');
+      }
     } else {
       const body = await req.json().catch(() => ({}));
       if (body.text) {

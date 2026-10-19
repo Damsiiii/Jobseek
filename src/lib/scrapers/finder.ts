@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobListing } from './types';
+import { extractPostedDate } from './dateUtils';
 
 export async function scrapeFinder(keywords: string = 'intern'): Promise<JobListing[]> {
   const results: JobListing[] = [];
@@ -20,6 +21,7 @@ export async function scrapeFinder(keywords: string = 'intern'): Promise<JobList
       const location = $(el).find('.location').text().trim() || 'Sri Lanka';
       const link = $(el).find('a').attr('href');
       const description = $(el).find('.description').text().trim();
+      const posted_date = extractPostedDate($, el);
 
       if (title && link) {
         const fullUrl = link.startsWith('http') ? link : `https://finder.lk${link}`;
@@ -30,6 +32,7 @@ export async function scrapeFinder(keywords: string = 'intern'): Promise<JobList
           source: 'Finder.lk',
           job_url: fullUrl,
           description: description || `Internship opportunity: ${title} in ${company}.`,
+          posted_date,
         });
       }
     });

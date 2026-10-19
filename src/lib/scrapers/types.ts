@@ -5,4 +5,6 @@ export interface JobListing {
   source: string;
   job_url: string;
   description: string;
+  /** ISO date (YYYY-MM-DD) of when the job was posted, if the source exposes it */
+  posted_date?: string | null;
 }

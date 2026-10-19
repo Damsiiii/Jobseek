@@ -3,16 +3,37 @@ import { scrapeXpressJobs } from './xpressjobs';
 import { scrapeFinder } from './finder';
 import { scrapeFindMyJob } from './findmyjob';
 import { scrapeTracker } from './tracker';
+import { scrapeLinkedIn } from './linkedin';
 import { JobListing } from './types';
 
-export async function scrapeAllJobs(keywords: string = 'intern'): Promise<JobListing[]> {
-  const scraperResults = await Promise.allSettled([
-    scrapeRooster(keywords),
-    scrapeXpressJobs(keywords),
-    scrapeFinder(keywords),
-    scrapeFindMyJob(keywords),
-    scrapeTracker(keywords),
-  ]);
+type ScraperFn = (keywords: string) => Promise<JobListing[]>;
+
+const ALL_SCRAPERS: Array<{ name: string; fn: ScraperFn }> = [
+  { name: 'rooster', fn: scrapeRooster },
+  { name: 'xpressjobs', fn: scrapeXpressJobs },
+  { name: 'finder', fn: scrapeFinder },
+  { name: 'findmyjob', fn: scrapeFindMyJob },
+  { name: 'tracker', fn: scrapeTracker },
+  { name: 'linkedin', fn: scrapeLinkedIn },
+];
+
+/**
+ * Runs every scraper for one or more keywords (e.g. derived from the
+ * candidate's CV) and returns a deduplicated list of jobs.
+ */
+export async function scrapeAllJobs(
+  keywords: string | string[] = 'intern'
+): Promise<JobListing[]> {
+  const keywordList = (Array.isArray(keywords) ? keywords : [keywords])
+    .map((k) => (k || '').trim())
+    .filter(Boolean);
+  const effectiveKeywords = keywordList.length > 0 ? keywordList : ['intern'];
+
+  const scraperResults = await Promise.allSettled(
+    effectiveKeywords.flatMap((keyword) =>
+      ALL_SCRAPERS.map((scraper) => scraper.fn(keyword))
+    )
+  );
 
   const allJobs: JobListing[] = [];
   for (const res of scraperResults) {
@@ -22,13 +43,16 @@ export async function scrapeAllJobs(keywords: string = 'intern'): Promise<JobLis
   }
 
   // Deduplicate by job_url or title+company
-  const seen = new Set<string>();
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
   const uniqueJobs: JobListing[] = [];
 
   for (const job of allJobs) {
-    const key = `${job.title.toLowerCase().trim()}_${job.company.toLowerCase().trim()}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const titleKey = `${job.title.toLowerCase().trim()}_${job.company.toLowerCase().trim()}`;
+    const urlKey = job.job_url.toLowerCase().trim();
+    if (!seenTitles.has(titleKey) && !seenUrls.has(urlKey)) {
+      seenTitles.add(titleKey);
+      seenUrls.add(urlKey);
       uniqueJobs.push(job);
     }
   }

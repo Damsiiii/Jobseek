@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobListing } from './types';
+import { extractPostedDate } from './dateUtils';
 
 export async function scrapeTracker(keywords: string = 'intern'): Promise<JobListing[]> {
   const results: JobListing[] = [];
@@ -18,6 +19,7 @@ export async function scrapeTracker(keywords: string = 'intern'): Promise<JobLis
       const title = $(el).find('a.job-title, td:nth-child(2) h2, td:nth-child(2) a').text().trim();
       const company = $(el).find('td:nth-child(1), .employer-name').text().trim() || 'Tracker / TopJobs Sri Lanka';
       const link = $(el).find('a').attr('href');
+      const posted_date = extractPostedDate($, el);
 
       if (title && link && title.toLowerCase().includes('intern')) {
         const fullUrl = link.startsWith('http') ? link : `https://topjobs.lk/${link}`;
@@ -28,6 +30,7 @@ export async function scrapeTracker(keywords: string = 'intern'): Promise<JobLis
           source: 'Tracker Jobs',
           job_url: fullUrl,
           description: `Internship position ${title} at ${company}. Great opportunity for undergraduates and graduates in IT / Software Engineering.`,
+          posted_date,
         });
       }
     });

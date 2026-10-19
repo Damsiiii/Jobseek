@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobListing } from './types';
+import { extractPostedDate } from './dateUtils';
 
 export async function scrapeXpressJobs(keywords: string = 'intern'): Promise<JobListing[]> {
   const results: JobListing[] = [];
@@ -20,6 +21,7 @@ export async function scrapeXpressJobs(keywords: string = 'intern'): Promise<Job
       const location = $(el).find('.location').text().trim() || 'Colombo, Sri Lanka';
       const link = $(el).find('a').attr('href');
       const description = $(el).find('.job-description, p').text().trim();
+      const posted_date = extractPostedDate($, el);
 
       if (title && link) {
         const fullUrl = link.startsWith('http') ? link : `https://xpress.jobs${link}`;
@@ -30,6 +32,7 @@ export async function scrapeXpressJobs(keywords: string = 'intern'): Promise<Job
           source: 'XpressJobs',
           job_url: fullUrl,
           description: description || `Full-time internship role: ${title} at ${company}. Requirements: problem solving, teamwork, CS background.`,
+          posted_date,
         });
       }
     });

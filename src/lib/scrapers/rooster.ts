@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobListing } from './types';
+import { extractPostedDate } from './dateUtils';
 
 export async function scrapeRooster(keywords: string = 'intern'): Promise<JobListing[]> {
   const results: JobListing[] = [];
@@ -20,6 +21,7 @@ export async function scrapeRooster(keywords: string = 'intern'): Promise<JobLis
       const location = $(el).find('.location, .address').text().trim() || 'Colombo, Sri Lanka';
       const link = $(el).find('a').attr('href');
       const description = $(el).find('.description, .summary, p').text().trim() || `${title} internship opportunity at ${company}.`;
+      const posted_date = extractPostedDate($, el);
 
       if (title && link) {
         const fullUrl = link.startsWith('http') ? link : `https://rooster.lk${link}`;
@@ -30,6 +32,7 @@ export async function scrapeRooster(keywords: string = 'intern'): Promise<JobLis
           source: 'Rooster.lk',
           job_url: fullUrl,
           description: description || `Software / Tech Internship position for ${title} at ${company}.`,
+          posted_date,
         });
       }
     });
