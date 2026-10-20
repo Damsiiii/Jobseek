@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { deriveSearchKeywords } from '../src/lib/scrapers/cvKeywords.ts';
-import { toIsoDate } from '../src/lib/scrapers/dateUtils.ts';
+import { toIsoDate, isRecentlyScraped } from '../src/lib/scrapers/dateUtils.ts';
 import { extractCandidateName, extractCandidateContact } from '../src/lib/cvParser.ts';
 
 describe('deriveSearchKeywords', () => {
@@ -46,6 +46,26 @@ describe('toIsoDate', () => {
   test('handles today and yesterday', () => {
     assert.ok(toIsoDate('today'));
     assert.ok(toIsoDate('yesterday'));
+  });
+});
+
+describe('isRecentlyScraped', () => {
+  test('returns true for timestamps within 24 hours', () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString();
+    assert.equal(isRecentlyScraped(twoHoursAgo), true);
+  });
+
+  test('returns false for timestamps older than 24 hours', () => {
+    const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
+    assert.equal(isRecentlyScraped(twoDaysAgo), false);
+  });
+
+  test('handles null, undefined, and SQLite space-separated formats', () => {
+    assert.equal(isRecentlyScraped(null), false);
+    assert.equal(isRecentlyScraped(undefined), false);
+    assert.equal(isRecentlyScraped('invalid-date'), false);
+    const recentSqlite = new Date(Date.now() - 3600000).toISOString().replace('T', ' ').slice(0, 19);
+    assert.equal(isRecentlyScraped(recentSqlite), true);
   });
 });
 

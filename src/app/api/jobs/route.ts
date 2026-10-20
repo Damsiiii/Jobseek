@@ -35,8 +35,8 @@ async function upsertJobs(
   try {
     for (const job of scraped) {
       await db.run(
-        `INSERT INTO jobs (title, company, location, source, job_url, description, posted_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO jobs (title, company, location, source, job_url, description, posted_date, first_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(job_url) DO UPDATE SET
            title = excluded.title,
            company = excluded.company,
@@ -55,7 +55,16 @@ async function upsertJobs(
 }
 
 const JOBS_QUERY = `
-  SELECT * FROM jobs 
+  SELECT 
+    jobs.*,
+    CASE WHEN app.job_id IS NOT NULL THEN 1 ELSE 0 END as has_applied,
+    app.applied_at
+  FROM jobs 
+  LEFT JOIN (
+    SELECT job_id, MAX(created_at) as applied_at 
+    FROM applications 
+    GROUP BY job_id
+  ) app ON app.job_id = jobs.id
   WHERE NOT (
     title LIKE 'senior %' OR title LIKE '% senior %' OR title LIKE '% senior'
     OR title LIKE 'lead %' OR title LIKE '% lead %' OR title LIKE '% lead'

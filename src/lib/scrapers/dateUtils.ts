@@ -85,3 +85,17 @@ export function extractPostedDate(
 
   return null;
 }
+
+/**
+ * Checks whether a given timestamp (e.g. first_seen_at) is within maxHours (default 24h).
+ */
+export function isRecentlyScraped(rawTimestamp?: string | null, maxHours = 24): boolean {
+  if (!rawTimestamp) return false;
+  // SQLite timestamps are UTC 'YYYY-MM-DD HH:MM:SS'
+  const iso = rawTimestamp.includes('T') ? rawTimestamp : rawTimestamp.replace(' ', 'T') + 'Z';
+  const time = new Date(iso).getTime();
+  if (isNaN(time)) return false;
+  const diff = Date.now() - time;
+  // Guard against slight future clock skew and older timestamps
+  return diff >= -60000 && diff <= maxHours * 3600000;
+}

@@ -57,14 +57,19 @@ async function initDb(db: Database) {
       job_url TEXT UNIQUE NOT NULL,
       description TEXT NOT NULL,
       posted_date TEXT,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // Migration: add posted_date to jobs tables created before it existed
+  // Migration: add posted_date and first_seen_at to jobs tables created before they existed
   const jobColumns: Array<{ name: string }> = await db.all('PRAGMA table_info(jobs)');
   if (!jobColumns.some((col) => col.name === 'posted_date')) {
     await db.exec('ALTER TABLE jobs ADD COLUMN posted_date TEXT');
+  }
+  if (!jobColumns.some((col) => col.name === 'first_seen_at')) {
+    await db.exec('ALTER TABLE jobs ADD COLUMN first_seen_at DATETIME');
+    await db.exec('UPDATE jobs SET first_seen_at = COALESCE(scraped_at, CURRENT_TIMESTAMP) WHERE first_seen_at IS NULL');
   }
 
   // Tailored Applications table
