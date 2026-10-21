@@ -6,9 +6,18 @@ import { scoreApplicationDocs } from '@/lib/atsScore';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { jobId, applicationId, regenerate, optimizationContext } = body;
+    const { jobId, applicationId, regenerate, optimizationContext, markOnly } = body;
 
     const db = await getDb();
+
+    if (markOnly && jobId) {
+      await db.run(
+        `INSERT INTO applications (job_id, tailored_cv_markdown, cover_letter_markdown)
+         VALUES (?, '', '')`,
+        [jobId]
+      );
+      return NextResponse.json({ success: true });
+    }
 
     let effectiveJobId = jobId;
     if (!effectiveJobId && applicationId) {
@@ -128,6 +137,20 @@ export async function GET(req: Request) {
       );
       return NextResponse.json({ success: true, applications: rows });
     }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const jobId = searchParams.get('jobId');
+    if (!jobId) return NextResponse.json({ success: false, error: 'jobId is required' }, { status: 400 });
+    const db = await getDb();
+    await db.run('DELETE FROM applications WHERE job_id = ?', [jobId]);
+    return NextResponse.json({ success: true });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ success: false, error: message }, { status: 500 });

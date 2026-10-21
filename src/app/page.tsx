@@ -87,7 +87,8 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState('All');
-  const [hideApplied, setHideApplied] = useState(false);
+  const [dateFilter, setDateFilter] = useState<'all' | '24h' | '7d' | '30d'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'unapplied' | 'applied'>('all');
 
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [uploadingCv, setUploadingCv] = useState(false);
@@ -212,6 +213,68 @@ export default function Home() {
     }
   };
 
+  const handleViewApplication = async (job: Job) => {
+    try {
+      const res = await fetch(`/api/tailor?jobId=${job.id}`);
+      const data = await res.json();
+      if (data.success && data.application && data.application.tailored_cv_markdown) {
+        const app = data.application;
+        const parseScore = (jsonStr?: string, fallback = 0): DocScore => {
+          try {
+            return jsonStr ? JSON.parse(jsonStr) : { score: fallback, matchedKeywords: [], missingKeywords: [], tips: [] };
+          } catch {
+            return { score: fallback, matchedKeywords: [], missingKeywords: [], tips: [] };
+          }
+        };
+        setActiveApplication({
+          applicationId: app.id,
+          job,
+          tailoredCv: app.tailored_cv_markdown,
+          coverLetter: app.cover_letter_markdown,
+          scores: {
+            cv: parseScore(app.cv_score_json, app.cv_ats_score),
+            coverLetter: parseScore(app.cover_letter_score_json, app.cover_letter_ats_score),
+          },
+        });
+        setActiveTab('cv');
+      } else {
+        handleTailorApplication(job);
+      }
+    } catch (err) {
+      console.error(err);
+      handleTailorApplication(job);
+    }
+  };
+
+  const handleToggleApplied = async (e: React.MouseEvent, job: Job) => {
+    e.stopPropagation();
+    const willApply = !job.has_applied;
+    try {
+      if (willApply) {
+        await fetch('/api/tailor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId: job.id, markOnly: true }),
+        });
+      } else {
+        await fetch(`/api/tailor?jobId=${job.id}`, { method: 'DELETE' });
+      }
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === job.id
+            ? {
+                ...j,
+                has_applied: willApply ? 1 : 0,
+                applied_at: willApply ? new Date().toISOString() : null,
+              }
+            : j
+        )
+      );
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleRegenerateApplication = async () => {
     if (!activeApplication || isRegenerating) return;
 
@@ -265,16 +328,24 @@ export default function Home() {
   };
 
   const appliedCount = jobs.filter((job) => Boolean(job.has_applied)).length;
+  const unappliedCount = jobs.length - appliedCount;
 
-  // Filter jobs by search, source, and applied toggle
+  // Filter jobs by search, source, date freshness, and status filter (all / unapplied / applied)
   const filteredJobs = jobs.filter((job) => {
-    if (hideApplied && job.has_applied) return false;
+    if (statusFilter === 'unapplied' && job.has_applied) return false;
+    if (statusFilter === 'applied' && !job.has_applied) return false;
     const matchesSearch =
       job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
       job.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesSource = selectedSource === 'All' || job.source === selectedSource;
-    return matchesSearch && matchesSource;
+    if (!matchesSearch || !matchesSource) return false;
+    if (dateFilter !== 'all') {
+      const maxHours = dateFilter === '24h' ? 24 : dateFilter === '7d' ? 168 : 720;
+      const raw = job.posted_date || job.first_seen_at || job.scraped_at;
+      if (!isRecentlyScraped(raw, maxHours)) return false;
+    }
+    return true;
   });
 
   return (
@@ -410,11 +481,11 @@ export default function Home() {
               />
             </div>
 
-            <div className="flex items-center space-x-3 w-full md:w-auto">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
               <select
                 value={selectedSource}
                 onChange={(e) => setSelectedSource(e.target.value)}
-                className="bg-slate-50 border border-slate-300 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="bg-slate-50 border border-slate-300 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="All">All Sources</option>
                 <option value="Rooster.lk">Rooster.lk</option>
@@ -425,28 +496,54 @@ export default function Home() {
                 <option value="LinkedIn">LinkedIn</option>
               </select>
 
-              <button
-                type="button"
-                onClick={() => setHideApplied((prev) => !prev)}
-                className={`flex items-center space-x-1.5 text-xs font-semibold py-2 px-3 rounded-lg border transition-colors flex-shrink-0 cursor-pointer ${
-                  hideApplied
-                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-xs'
-                    : 'bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100'
-                }`}
-                title="Toggle visibility of applied jobs"
+              <select
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value as 'all' | '24h' | '7d' | '30d')}
+                className="bg-slate-50 border border-slate-300 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                aria-label="Filter by date posted"
               >
-                <FileCheck className="w-3.5 h-3.5 text-indigo-600" />
-                <span>{hideApplied ? 'Applied Hidden' : 'Hide Applied'}</span>
-                {appliedCount > 0 && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      hideApplied ? 'bg-indigo-200 text-indigo-800' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    {appliedCount}
-                  </span>
-                )}
-              </button>
+                <option value="all">Any time</option>
+                <option value="24h">Past 24 hours</option>
+                <option value="7d">Past week</option>
+                <option value="30d">Past month</option>
+              </select>
+
+              <div className="flex bg-slate-100 p-0.5 rounded-lg text-xs font-semibold border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className={`px-2.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                    statusFilter === 'all'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All ({jobs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('unapplied')}
+                  className={`px-2.5 py-1.5 rounded-md transition-colors cursor-pointer ${
+                    statusFilter === 'unapplied'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Unapplied ({unappliedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('applied')}
+                  className={`px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1 cursor-pointer ${
+                    statusFilter === 'applied'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <FileCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  Applied ({appliedCount})
+                </button>
+              </div>
 
               <button
                 onClick={() => fetchJobs(true)}
@@ -474,24 +571,35 @@ export default function Home() {
           <div className="space-y-4">
             <div className="flex justify-between items-center px-1">
               <h2 className="text-lg font-bold text-slate-900">
-                Available Internship Positions ({filteredJobs.length})
+                {statusFilter === 'applied'
+                  ? 'Tracked Applications'
+                  : statusFilter === 'unapplied'
+                  ? 'Unapplied Positions'
+                  : 'Available Internship Positions'}{' '}
+                ({filteredJobs.length})
               </h2>
             </div>
 
             {filteredJobs.length === 0 ? (
               <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
                 <Briefcase className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <h3 className="text-base font-semibold text-slate-800">No internships found</h3>
+                <h3 className="text-base font-semibold text-slate-800">
+                  {statusFilter === 'applied' ? 'No tracked applications yet' : 'No internships found'}
+                </h3>
                 <p className="text-sm text-slate-500 mt-1 mb-4">
-                  Click "Scrape Jobs" to fetch the latest internship postings across Sri Lanka.
+                  {statusFilter === 'applied'
+                    ? 'When you customize an ATS application or click the checkmark on any job, it will be tracked here.'
+                    : 'Click "Scrape Jobs" to fetch the latest internship postings across Sri Lanka.'}
                 </p>
-                <button
-                  onClick={() => fetchJobs(true)}
-                  className="inline-flex items-center space-x-2 px-4 py-2 bg-indigo-600 text-white font-medium text-sm rounded-lg hover:bg-indigo-700 transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  <span>Run Scraper Now</span>
-                </button>
+                {statusFilter !== 'applied' && (
+                  <button
+                    onClick={() => fetchJobs(true)}
+                    className="inline-flex items-center space-x-2 px-4 py-2 bg-indigo-600 text-white font-medium text-sm rounded-lg hover:bg-indigo-700 transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>Run Scraper Now</span>
+                  </button>
+                )}
               </div>
             ) : (
               filteredJobs.map((job) => {
@@ -502,7 +610,7 @@ export default function Home() {
                     key={job.id}
                     className={`bg-white rounded-xl border p-6 shadow-sm hover:shadow-md transition-all ${
                       hasApplied
-                        ? 'border-slate-200 opacity-90'
+                        ? 'border-slate-200 opacity-95'
                         : isNew
                         ? 'border-emerald-300 ring-1 ring-emerald-200/70 bg-emerald-50/15'
                         : 'border-slate-200'
@@ -517,9 +625,9 @@ export default function Home() {
                             </span>
                           )}
                           {hasApplied && (
-                            <span className="flex items-center gap-1 px-2.5 py-0.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-md border border-slate-200">
+                            <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-800 text-xs font-semibold rounded-md border border-emerald-200">
                               <FileCheck className="w-3.5 h-3.5 text-emerald-600" />
-                              Applied
+                              Applied {formatPostedDate(job.applied_at) ? `(${formatPostedDate(job.applied_at)})` : ''}
                             </span>
                           )}
                           <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 text-xs font-semibold rounded-md">
@@ -561,24 +669,55 @@ export default function Home() {
                           <ExternalLink className="w-4 h-4" />
                         </a>
 
-                        <button
-                          onClick={() => handleTailorApplication(job)}
-                          disabled={generatingForJobId === job.id}
-                          className={`flex items-center space-x-2 font-semibold text-sm px-4 py-2 rounded-lg transition-colors shadow-sm ${
-                            hasApplied
-                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
-                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                          }`}
-                        >
-                          <Sparkles className={`w-4 h-4 ${generatingForJobId === job.id ? 'animate-spin' : ''}`} />
-                          <span>
-                            {generatingForJobId === job.id
-                              ? 'Tailoring...'
-                              : hasApplied
-                              ? 'Applied (Re-tailor)'
-                              : 'Customize ATS CV & Cover Letter'}
-                          </span>
-                        </button>
+                        {hasApplied ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleViewApplication(job)}
+                              className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3 py-2 rounded-lg transition-colors shadow-xs cursor-pointer"
+                              title="View saved tailored CV and cover letter"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>View Docs</span>
+                            </button>
+                            <button
+                              onClick={() => handleTailorApplication(job)}
+                              disabled={generatingForJobId === job.id}
+                              className="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 font-medium px-2.5 py-2 rounded-lg transition-colors cursor-pointer"
+                              title="Regenerate ATS application"
+                            >
+                              Re-tailor
+                            </button>
+                            <button
+                              onClick={(e) => handleToggleApplied(e, job)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Unmark from applied"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleTailorApplication(job)}
+                              disabled={generatingForJobId === job.id}
+                              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm px-4 py-2 rounded-lg transition-colors shadow-sm cursor-pointer"
+                            >
+                              <Sparkles className={`w-4 h-4 ${generatingForJobId === job.id ? 'animate-spin' : ''}`} />
+                              <span>
+                                {generatingForJobId === job.id
+                                  ? 'Tailoring...'
+                                  : 'Customize ATS CV & Cover Letter'}
+                              </span>
+                            </button>
+                            <button
+                              onClick={(e) => handleToggleApplied(e, job)}
+                              className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                              title="Mark as applied directly"
+                            >
+                              <FileCheck className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 

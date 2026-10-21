@@ -96,6 +96,6 @@ export function isRecentlyScraped(rawTimestamp?: string | null, maxHours = 24): 
   const time = new Date(iso).getTime();
   if (isNaN(time)) return false;
   const diff = Date.now() - time;
-  // Guard against slight future clock skew and older timestamps
-  return diff >= -60000 && diff <= maxHours * 3600000;
+  // Guard against timezone clock skew (up to 24h future) and older timestamps
+  return diff >= -86400000 && diff <= maxHours * 3600000;
 }

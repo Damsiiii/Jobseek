@@ -55,9 +55,24 @@ describe('isRecentlyScraped', () => {
     assert.equal(isRecentlyScraped(twoHoursAgo), true);
   });
 
-  test('returns false for timestamps older than 24 hours', () => {
+  test('returns false for timestamps older than default 24 hours', () => {
     const twoDaysAgo = new Date(Date.now() - 48 * 3600000).toISOString();
     assert.equal(isRecentlyScraped(twoDaysAgo), false);
+  });
+
+  test('supports custom maxHours for 7 days and 30 days freshness filters', () => {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 3600000).toISOString();
+    assert.equal(isRecentlyScraped(fiveDaysAgo, 24), false);
+    assert.equal(isRecentlyScraped(fiveDaysAgo, 168), true);
+
+    const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 3600000).toISOString();
+    assert.equal(isRecentlyScraped(twentyDaysAgo, 168), false);
+    assert.equal(isRecentlyScraped(twentyDaysAgo, 720), true);
+  });
+
+  test('handles future timezone skew within 24 hours', () => {
+    const twoHoursAhead = new Date(Date.now() + 2 * 3600000).toISOString();
+    assert.equal(isRecentlyScraped(twoHoursAhead, 24), true);
   });
 
   test('handles null, undefined, and SQLite space-separated formats', () => {
