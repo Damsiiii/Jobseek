@@ -19,11 +19,12 @@ export async function getDb(): Promise<Database> {
         PRAGMA foreign_keys = ON;
       `);
 
-      await initDb(db);
       return db;
     })();
   }
-  return dbPromise;
+  const db = await dbPromise;
+  await initDb(db);
+  return db;
 }
 
 async function initDb(db: Database) {
@@ -117,6 +118,22 @@ async function initDb(db: Database) {
       proposal_markdown TEXT NOT NULL,
       pitch_markdown TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Remote Scraped Jobs table
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL,
+      location TEXT,
+      source TEXT NOT NULL,
+      job_url TEXT UNIQUE NOT NULL,
+      description TEXT NOT NULL,
+      posted_date TEXT,
+      first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 }
