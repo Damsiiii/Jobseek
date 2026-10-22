@@ -16,7 +16,8 @@ import {
   X,
   FileCheck,
   Clock,
-  Wand2
+  Wand2,
+  Trash2
 } from 'lucide-react';
 import { downloadAsDocx, printOrSavePdf } from '@/lib/exportUtils';
 import { isRecentlyScraped } from '@/lib/scrapers/dateUtils';
@@ -93,7 +94,8 @@ export default function Home() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [uploadingCv, setUploadingCv] = useState(false);
   const [generatingForJobId, setGeneratingForJobId] = useState<number | null>(null);
-  const [lastKeywords, setLastKeywords] = useState<string[]>([]);
+  const [filterByCv, setFilterByCv] = useState(false);
+  const [cleaningClosed, setCleaningClosed] = useState(false);
 
   // Active customized document modal/drawer
   const [activeApplication, setActiveApplication] = useState<{
@@ -124,20 +126,14 @@ export default function Home() {
     }
   };
 
-  const fetchJobs = async (triggerScrape = false, basedOnCv = false) => {
+  const fetchJobs = async (triggerScrape = false) => {
     setLoadingJobs(true);
     try {
-      let url = '/api/jobs';
-      if (triggerScrape) {
-        url = basedOnCv ? '/api/jobs?scrape=true&basedOn=cv' : '/api/jobs?scrape=true';
-      }
+      const url = triggerScrape ? '/api/jobs?scrape=true' : '/api/jobs';
       const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs || []);
-        if (Array.isArray(data.keywords)) {
-          setLastKeywords(data.keywords);
-        }
       }
     } catch (err) {
       console.error(err);
@@ -162,8 +158,7 @@ export default function Home() {
       const data = await res.json();
       if (data.success) {
         setProfile(data.profile);
-        // Automatically scrape internships matched to the uploaded CV
-        await fetchJobs(true, true);
+        setFilterByCv(true);
       }
     } catch (err) {
       console.error(err);
@@ -275,6 +270,42 @@ export default function Home() {
     }
   };
 
+  const handleCleanClosedJobs = async () => {
+    setCleaningClosed(true);
+    try {
+      const res = await fetch('/api/jobs?cleanClosed=true', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        if (data.removedCount > 0) {
+          const removed = new Set<number>(data.removedIds);
+          setJobs((prev) => prev.filter((j) => !removed.has(j.id)));
+          alert(`Removed ${data.removedCount} job(s) that are no longer accepting applications.`);
+        } else {
+          alert('All checked jobs are active and accepting applications!');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error scanning for closed jobs.');
+    } finally {
+      setCleaningClosed(false);
+    }
+  };
+
+  const handleDeleteJob = async (e: React.MouseEvent, jobId: number) => {
+    e.stopPropagation();
+    if (!confirm('Remove this job listing from your board?')) return;
+    try {
+      const res = await fetch(`/api/jobs?id=${jobId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleRegenerateApplication = async () => {
     if (!activeApplication || isRegenerating) return;
 
@@ -330,7 +361,7 @@ export default function Home() {
   const appliedCount = jobs.filter((job) => Boolean(job.has_applied)).length;
   const unappliedCount = jobs.length - appliedCount;
 
-  // Filter jobs by search, source, date freshness, and status filter (all / unapplied / applied)
+  // Filter already scraped jobs by search, CV skills match, source, date freshness, and status
   const filteredJobs = jobs.filter((job) => {
     if (statusFilter === 'unapplied' && job.has_applied) return false;
     if (statusFilter === 'applied' && !job.has_applied) return false;
@@ -344,6 +375,13 @@ export default function Home() {
       const maxHours = dateFilter === '24h' ? 24 : dateFilter === '7d' ? 168 : 720;
       const raw = job.posted_date || job.first_seen_at || job.scraped_at;
       if (!isRecentlyScraped(raw, maxHours)) return false;
+    }
+    if (filterByCv && profile?.parsed_json?.skills?.length) {
+      const jobText = `${job.title} ${job.company} ${job.description}`.toLowerCase();
+      const hasSkill = profile.parsed_json.skills.some((skill) =>
+        jobText.includes(skill.toLowerCase().trim())
+      );
+      if (!hasSkill) return false;
     }
     return true;
   });
@@ -380,28 +418,35 @@ export default function Home() {
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {profile.parsed_json.skills.map((skill, i) => (
-                        <span
+                        <button
                           key={i}
-                          className="px-2.5 py-0.5 bg-slate-100 text-slate-700 rounded-full text-xs font-medium border border-slate-200"
+                          type="button"
+                          onClick={() => setSearchQuery(skill)}
+                          className="px-2.5 py-0.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 rounded-full text-xs font-medium border border-slate-200 transition-colors cursor-pointer"
+                          title={`Filter jobs by ${skill}`}
                         >
                           {skill}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
 
                 <button
-                  onClick={() => fetchJobs(true, true)}
-                  disabled={loadingJobs}
-                  className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors"
+                  type="button"
+                  onClick={() => setFilterByCv(!filterByCv)}
+                  className={`w-full flex items-center justify-center space-x-2 py-2 px-4 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                    filterByCv
+                      ? 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
                 >
-                  <Wand2 className={`w-4 h-4 ${loadingJobs ? 'animate-pulse' : ''}`} />
-                  <span>{loadingJobs ? 'Scraping Matches...' : 'Scrape Jobs Matched to My CV'}</span>
+                  <Wand2 className="w-4 h-4" />
+                  <span>{filterByCv ? 'Filtered by CV (Click to Show All)' : 'Filter Jobs Matched to My CV'}</span>
                 </button>
 
                 <label className="block w-full text-center py-2 px-4 border border-indigo-600 text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer text-sm font-medium transition-colors">
-                  {uploadingCv ? 'Processing CV & Scraping...' : 'Update CV (PDF)'}
+                  {uploadingCv ? 'Processing CV...' : 'Update CV (PDF)'}
                   <input
                     type="file"
                     accept=".pdf"
@@ -546,6 +591,16 @@ export default function Home() {
               </div>
 
               <button
+                onClick={handleCleanClosedJobs}
+                disabled={cleaningClosed || loadingJobs}
+                className="flex items-center space-x-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-300 font-medium text-sm py-2 px-3 rounded-lg transition-colors shadow-xs flex-shrink-0 cursor-pointer disabled:opacity-60"
+                title="Scan and remove jobs that are no longer accepting applications"
+              >
+                <Trash2 className={`w-4 h-4 ${cleaningClosed ? 'animate-spin' : ''}`} />
+                <span>{cleaningClosed ? 'Checking...' : 'Remove Closed'}</span>
+              </button>
+
+              <button
                 onClick={() => fetchJobs(true)}
                 disabled={loadingJobs}
                 className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm py-2 px-4 rounded-lg transition-colors shadow-sm flex-shrink-0"
@@ -556,14 +611,19 @@ export default function Home() {
             </div>
           </div>
 
-          {lastKeywords.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 px-1">
-              <span className="font-semibold uppercase tracking-wider">Searching:</span>
-              {lastKeywords.map((kw, i) => (
-                <span key={i} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full font-medium border border-indigo-100">
-                  {kw}
-                </span>
-              ))}
+          {filterByCv && (
+            <div className="flex items-center justify-between text-xs px-3 py-2 bg-emerald-50 text-emerald-800 rounded-lg border border-emerald-200">
+              <span className="flex items-center gap-1.5 font-medium">
+                <Wand2 className="w-3.5 h-3.5 text-emerald-600" />
+                Filtering already scraped jobs by your CV skills
+              </span>
+              <button
+                type="button"
+                onClick={() => setFilterByCv(false)}
+                className="text-xs text-emerald-700 hover:text-emerald-950 font-semibold cursor-pointer underline"
+              >
+                Clear filter
+              </button>
             </div>
           )}
 
@@ -694,6 +754,13 @@ export default function Home() {
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
+                            <button
+                              onClick={(e) => handleDeleteJob(e, job.id)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Remove job"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
@@ -715,6 +782,13 @@ export default function Home() {
                               title="Mark as applied directly"
                             >
                               <FileCheck className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteJob(e, job.id)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Remove job"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         )}

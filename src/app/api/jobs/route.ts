@@ -1,30 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { scrapeAllJobs } from '@/lib/scrapers';
-import { deriveSearchKeywords } from '@/lib/scrapers/cvKeywords';
-
-/**
- * Resolves the keywords to search for. When `basedOn === 'cv'`, keywords
- * are derived from the skills detected in the uploaded CV profile;
- * otherwise a single `keyword` query param (default "intern") is used.
- */
-async function resolveKeywords(searchParams: URLSearchParams): Promise<string[]> {
-  if (searchParams.get('basedOn') === 'cv') {
-    const db = await getDb();
-    const profileRow = await db.get('SELECT parsed_json FROM profile ORDER BY id DESC LIMIT 1');
-    if (profileRow?.parsed_json) {
-      try {
-        const parsed = JSON.parse(profileRow.parsed_json);
-        if (Array.isArray(parsed?.skills) && parsed.skills.length > 0) {
-          return deriveSearchKeywords(parsed.skills);
-        }
-      } catch {
-        // fall through to default keyword
-      }
-    }
-  }
-  return [searchParams.get('keyword') || 'intern'];
-}
 
 async function upsertJobs(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -65,15 +41,6 @@ const JOBS_QUERY = `
     FROM applications 
     GROUP BY job_id
   ) app ON app.job_id = jobs.id
-  WHERE NOT (
-    title LIKE 'senior %' OR title LIKE '% senior %' OR title LIKE '% senior'
-    OR title LIKE 'lead %' OR title LIKE '% lead %' OR title LIKE '% lead'
-    OR title LIKE 'principal %' OR title LIKE '% principal %'
-    OR title LIKE 'architect %' OR title LIKE '% architect %'
-    OR title LIKE 'manager %' OR title LIKE '% manager %'
-    OR title LIKE 'director %' OR title LIKE '% director %'
-    OR title LIKE 'head of %' OR title LIKE '% head of %'
-  )
   ORDER BY 
     CASE WHEN LOWER(title) LIKE '%intern%' OR LOWER(title) LIKE '%junior%' OR LOWER(title) LIKE '%trainee%' OR LOWER(title) LIKE '%associate%' THEN 0 ELSE 1 END,
     id DESC
@@ -83,17 +50,46 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const triggerScrape = searchParams.get('scrape') === 'true';
-    const keywords = await resolveKeywords(searchParams);
 
     const db = await getDb();
 
+    // Scrape without filtering
     if (triggerScrape) {
-      const scraped = await scrapeAllJobs(keywords);
+      const scraped = await scrapeAllJobs();
       await upsertJobs(db, scraped);
     }
 
-    const rows = await db.all(JOBS_QUERY);
-    return NextResponse.json({ success: true, count: rows.length, keywords, jobs: rows });
+    // Query already-scraped jobs from the database
+    let rows = await db.all(JOBS_QUERY);
+
+    // Filter already-scraped jobs by CV skills or keyword after scraping
+    if (searchParams.get('basedOn') === 'cv') {
+      const profileRow = await db.get('SELECT parsed_json FROM profile ORDER BY id DESC LIMIT 1');
+      if (profileRow?.parsed_json) {
+        try {
+          const parsed = JSON.parse(profileRow.parsed_json);
+          if (Array.isArray(parsed?.skills) && parsed.skills.length > 0) {
+            const skills: string[] = parsed.skills.map((s: string) => s.toLowerCase().trim()).filter(Boolean);
+            rows = rows.filter((job) => {
+              const text = `${job.title} ${job.company} ${job.description}`.toLowerCase();
+              return skills.some((s) => text.includes(s));
+            });
+          }
+        } catch {
+          // ignore parsing error
+        }
+      }
+    }
+
+    const keyword = searchParams.get('keyword');
+    if (keyword && keyword.trim()) {
+      const kw = keyword.toLowerCase().trim();
+      rows = rows.filter((job) =>
+        `${job.title} ${job.company} ${job.description}`.toLowerCase().includes(kw)
+      );
+    }
+
+    return NextResponse.json({ success: true, count: rows.length, jobs: rows });
   } catch (error) {
     console.error('Error fetching/scraping jobs:', error);
     return NextResponse.json(
@@ -103,31 +99,68 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST(req: Request) {
+export async function isJobClosed(url: string): Promise<boolean> {
   try {
-    const body = await req.json().catch(() => ({}));
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.status === 404 || res.status === 410) return true;
+    const html = await res.text();
+    return (
+      html.includes('closed-job') ||
+      /no longer accepting applications|this vacancy has expired|this job has expired|job is closed|application deadline has passed/i.test(html)
+    );
+  } catch {
+    return false;
+  }
+}
 
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    const cleanClosed = searchParams.get('cleanClosed') === 'true';
     const db = await getDb();
-    let keywords: string[] = [body.keyword || 'intern'];
-    if (body.basedOn === 'cv') {
-      const profileRow = await db.get('SELECT parsed_json FROM profile ORDER BY id DESC LIMIT 1');
-      if (profileRow?.parsed_json) {
-        try {
-          const parsed = JSON.parse(profileRow.parsed_json);
-          if (Array.isArray(parsed?.skills) && parsed.skills.length > 0) {
-            keywords = deriveSearchKeywords(parsed.skills);
-          }
-        } catch {
-          // keep default keyword
-        }
-      }
+
+    if (id) {
+      await db.run('DELETE FROM applications WHERE job_id = ?', [id]);
+      await db.run('DELETE FROM jobs WHERE id = ?', [id]);
+      return NextResponse.json({ success: true, removedCount: 1, removedIds: [Number(id)] });
     }
 
-    const scraped = await scrapeAllJobs(keywords);
-    await upsertJobs(db, scraped);
+    if (cleanClosed) {
+      const jobs: Array<{ id: number; job_url: string }> = await db.all('SELECT id, job_url FROM jobs');
+      const closedIds: number[] = [];
 
-    const rows = await db.all(JOBS_QUERY);
-    return NextResponse.json({ success: true, count: rows.length, keywords, jobs: rows });
+      const CONCURRENCY = 10;
+      let index = 0;
+      async function worker() {
+        while (index < jobs.length) {
+          const job = jobs[index++];
+          if (!job?.job_url) continue;
+          if (await isJobClosed(job.job_url)) {
+            closedIds.push(job.id);
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, () => worker()));
+
+      if (closedIds.length > 0) {
+        const placeholders = closedIds.map(() => '?').join(',');
+        await db.run(`DELETE FROM applications WHERE job_id IN (${placeholders})`, closedIds);
+        await db.run(`DELETE FROM jobs WHERE id IN (${placeholders})`, closedIds);
+      }
+
+      return NextResponse.json({ success: true, removedCount: closedIds.length, removedIds: closedIds });
+    }
+
+    return NextResponse.json({ success: false, error: 'Missing id or cleanClosed parameter' }, { status: 400 });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
