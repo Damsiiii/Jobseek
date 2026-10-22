@@ -96,6 +96,14 @@ export default function Home() {
   const [generatingForJobId, setGeneratingForJobId] = useState<number | null>(null);
   const [filterByCv, setFilterByCv] = useState(false);
   const [cleaningClosed, setCleaningClosed] = useState(false);
+  const [closedJobsToVerify, setClosedJobsToVerify] = useState<Array<{
+    id: number;
+    title: string;
+    company: string;
+    source: string;
+    job_url: string;
+  }> | null>(null);
+  const [selectedClosedIds, setSelectedClosedIds] = useState<Set<number>>(new Set());
 
   // Active customized document modal/drawer
   const [activeApplication, setActiveApplication] = useState<{
@@ -273,13 +281,12 @@ export default function Home() {
   const handleCleanClosedJobs = async () => {
     setCleaningClosed(true);
     try {
-      const res = await fetch('/api/jobs?cleanClosed=true', { method: 'DELETE' });
+      const res = await fetch('/api/jobs?checkClosed=true');
       const data = await res.json();
       if (data.success) {
-        if (data.removedCount > 0) {
-          const removed = new Set<number>(data.removedIds);
-          setJobs((prev) => prev.filter((j) => !removed.has(j.id)));
-          alert(`Removed ${data.removedCount} job(s) that are no longer accepting applications.`);
+        if (data.closedJobs && data.closedJobs.length > 0) {
+          setClosedJobsToVerify(data.closedJobs);
+          setSelectedClosedIds(new Set(data.closedJobs.map((j: { id: number }) => j.id)));
         } else {
           alert('All checked jobs are active and accepting applications!');
         }
@@ -287,6 +294,27 @@ export default function Home() {
     } catch (err) {
       console.error(err);
       alert('Error scanning for closed jobs.');
+    } finally {
+      setCleaningClosed(false);
+    }
+  };
+
+  const handleConfirmRemoveClosed = async () => {
+    if (selectedClosedIds.size === 0) return;
+    setCleaningClosed(true);
+    try {
+      const idsParam = Array.from(selectedClosedIds).join(',');
+      const res = await fetch(`/api/jobs?ids=${idsParam}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setJobs((prev) => prev.filter((j) => !selectedClosedIds.has(j.id)));
+        const count = selectedClosedIds.size;
+        setClosedJobsToVerify(null);
+        alert(`Successfully removed ${count} closed job(s).`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error removing closed jobs.');
     } finally {
       setCleaningClosed(false);
     }
@@ -1032,6 +1060,118 @@ export default function Home() {
                   }
                 />
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Verification Modal for Closed Jobs */}
+      {closedJobsToVerify && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden my-auto">
+            {/* Header */}
+            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center space-x-3">
+                <Trash2 className="w-5 h-5 text-rose-400" />
+                <div>
+                  <h3 className="font-bold text-base sm:text-lg">Review Closed Jobs ({closedJobsToVerify.length})</h3>
+                  <p className="text-xs text-slate-400">
+                    Verify original links before confirming removal from your board
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setClosedJobsToVerify(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Selection bar */}
+            <div className="bg-slate-50 px-6 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-medium text-slate-600">
+              <span>{selectedClosedIds.size} of {closedJobsToVerify.length} selected for removal</span>
+              <div className="space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedClosedIds(new Set(closedJobsToVerify.map((j) => j.id)))}
+                  className="text-indigo-600 hover:text-indigo-800 cursor-pointer font-semibold"
+                >
+                  Select All
+                </button>
+                <span>|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedClosedIds(new Set())}
+                  className="text-slate-500 hover:text-slate-700 cursor-pointer"
+                >
+                  Deselect All
+                </button>
+              </div>
+            </div>
+
+            {/* List of closed jobs */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3 divide-y divide-slate-100">
+              {closedJobsToVerify.map((job) => {
+                const isSelected = selectedClosedIds.has(job.id);
+                return (
+                  <div
+                    key={job.id}
+                    className="pt-3 first:pt-0 flex items-start justify-between gap-3"
+                  >
+                    <label className="flex items-start gap-3 cursor-pointer flex-1">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          const next = new Set(selectedClosedIds);
+                          if (isSelected) next.delete(job.id);
+                          else next.add(job.id);
+                          setSelectedClosedIds(next);
+                        }}
+                        className="mt-1 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <div className="text-sm">
+                        <p className="font-semibold text-slate-900 leading-tight">{job.title}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {job.company} · <span className="font-medium text-indigo-600">{job.source}</span>
+                        </p>
+                      </div>
+                    </label>
+
+                    <a
+                      href={job.job_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-md font-medium transition-colors flex-shrink-0"
+                      title="Open in new tab to verify"
+                    >
+                      <span>Verify</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Actions */}
+            <div className="bg-slate-100 px-6 py-3 border-t border-slate-200 flex justify-end items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setClosedJobsToVerify(null)}
+                className="px-4 py-2 text-sm text-slate-700 hover:text-slate-900 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveClosed}
+                disabled={selectedClosedIds.size === 0 || cleaningClosed}
+                className="px-4 py-2 text-sm bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg transition-colors font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Remove Selected ({selectedClosedIds.size})</span>
+              </button>
             </div>
           </div>
         </div>

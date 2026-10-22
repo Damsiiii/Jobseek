@@ -89,6 +89,11 @@ export async function GET(req: Request) {
       );
     }
 
+    if (searchParams.get('checkClosed') === 'true') {
+      const closedJobs = await findClosedJobs(db);
+      return NextResponse.json({ success: true, count: closedJobs.length, closedJobs });
+    }
+
     return NextResponse.json({ success: true, count: rows.length, jobs: rows });
   } catch (error) {
     console.error('Error fetching/scraping jobs:', error);
@@ -121,46 +126,64 @@ export async function isJobClosed(url: string): Promise<boolean> {
   }
 }
 
+export async function findClosedJobs(db: Awaited<ReturnType<typeof getDb>>) {
+  const jobs: Array<{ id: number; title: string; company: string; source: string; job_url: string }> =
+    await db.all('SELECT id, title, company, source, job_url FROM jobs ORDER BY id DESC');
+  const closedJobs: typeof jobs = [];
+
+  const CONCURRENCY = 10;
+  let index = 0;
+  async function worker() {
+    while (index < jobs.length) {
+      const job = jobs[index++];
+      if (!job?.job_url) continue;
+      if (await isJobClosed(job.job_url)) {
+        closedJobs.push(job);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, () => worker()));
+  return closedJobs;
+}
+
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
+    const idsParam = searchParams.get('ids');
     const cleanClosed = searchParams.get('cleanClosed') === 'true';
     const db = await getDb();
 
     if (id) {
+      const job = await db.get('SELECT id, title, company, source, job_url FROM jobs WHERE id = ?', [id]);
       await db.run('DELETE FROM applications WHERE job_id = ?', [id]);
       await db.run('DELETE FROM jobs WHERE id = ?', [id]);
-      return NextResponse.json({ success: true, removedCount: 1, removedIds: [Number(id)] });
+      return NextResponse.json({ success: true, removedCount: 1, removedJobs: job ? [job] : [] });
+    }
+
+    if (idsParam) {
+      const ids = idsParam.split(',').map(Number).filter((n) => !isNaN(n) && n > 0);
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        const removedJobs = await db.all(`SELECT id, title, company, source, job_url FROM jobs WHERE id IN (${placeholders})`, ids);
+        await db.run(`DELETE FROM applications WHERE job_id IN (${placeholders})`, ids);
+        await db.run(`DELETE FROM jobs WHERE id IN (${placeholders})`, ids);
+        return NextResponse.json({ success: true, removedCount: ids.length, removedJobs });
+      }
     }
 
     if (cleanClosed) {
-      const jobs: Array<{ id: number; job_url: string }> = await db.all('SELECT id, job_url FROM jobs');
-      const closedIds: number[] = [];
-
-      const CONCURRENCY = 10;
-      let index = 0;
-      async function worker() {
-        while (index < jobs.length) {
-          const job = jobs[index++];
-          if (!job?.job_url) continue;
-          if (await isJobClosed(job.job_url)) {
-            closedIds.push(job.id);
-          }
-        }
+      const closedJobs = await findClosedJobs(db);
+      if (closedJobs.length > 0) {
+        const ids = closedJobs.map((j) => j.id);
+        const placeholders = ids.map(() => '?').join(',');
+        await db.run(`DELETE FROM applications WHERE job_id IN (${placeholders})`, ids);
+        await db.run(`DELETE FROM jobs WHERE id IN (${placeholders})`, ids);
       }
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, () => worker()));
-
-      if (closedIds.length > 0) {
-        const placeholders = closedIds.map(() => '?').join(',');
-        await db.run(`DELETE FROM applications WHERE job_id IN (${placeholders})`, closedIds);
-        await db.run(`DELETE FROM jobs WHERE id IN (${placeholders})`, closedIds);
-      }
-
-      return NextResponse.json({ success: true, removedCount: closedIds.length, removedIds: closedIds });
+      return NextResponse.json({ success: true, removedCount: closedJobs.length, removedJobs: closedJobs });
     }
 
-    return NextResponse.json({ success: false, error: 'Missing id or cleanClosed parameter' }, { status: 400 });
+    return NextResponse.json({ success: false, error: 'Missing id, ids, or cleanClosed parameter' }, { status: 400 });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
